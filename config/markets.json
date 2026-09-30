@@ -1,0 +1,71 @@
+{
+  "source": "https://insideairbnb.com/get-the-data/",
+  "retrieved": "2026-09-29",
+  "default_market": "albany",
+  "markets": [
+    {
+      "code": "albany",
+      "name": "Albany",
+      "country": "united-states",
+      "region": "ny",
+      "city": "albany",
+      "snapshot_date": "2026-06-16"
+    },
+    {
+      "code": "new-york-city",
+      "name": "New York City",
+      "country": "united-states",
+      "region": "ny",
+      "city": "new-york-city",
+      "snapshot_date": "2026-06-14"
+    },
+    {
+      "code": "los-angeles",
+      "name": "Los Angeles",
+      "country": "united-states",
+      "region": "ca",
+      "city": "los-angeles",
+      "snapshot_date": "2026-06-15"
+    },
+    {
+      "code": "london",
+      "name": "London",
+      "country": "united-kingdom",
+      "region": "england",
+      "city": "london",
+      "snapshot_date": "2026-06-19"
+    },
+    {
+      "code": "paris",
+      "name": "Paris",
+      "country": "france",
+      "region": "ile-de-france",
+      "city": "paris",
+      "snapshot_date": "2026-06-16"
+    },
+    {
+      "code": "barcelona",
+      "name": "Barcelona",
+      "country": "spain",
+      "region": "catalonia",
+      "city": "barcelona",
+      "snapshot_date": "2026-06-24"
+    },
+    {
+      "code": "rome",
+      "name": "Rome",
+      "country": "italy",
+      "region": "lazio",
+      "city": "rome",
+      "snapshot_date": "2026-06-20"
+    },
+    {
+      "code": "sydney",
+      "name": "Sydney",
+      "country": "australia",
+      "region": "nsw",
+      "city": "sydney",
+      "snapshot_date": "2026-06-16"
+    }
+  ]
+}

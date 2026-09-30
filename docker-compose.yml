@@ -1,0 +1,38 @@
+name: airbnb-etl
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: airbnb
+      POSTGRES_PASSWORD: airbnb
+      POSTGRES_DB: airbnb
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airbnb -d airbnb"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  api:
+    build: .
+    environment:
+      DATABASE_URL: postgresql://airbnb:airbnb@db:5432/airbnb
+      STORAGE_BACKEND: local
+      DATA_DIR: /data
+      MARKETS_FILE: /app/config/markets.json
+      DOWNLOAD_CONCURRENCY: "7"
+    volumes:
+      - rawdata:/data
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  rawdata:

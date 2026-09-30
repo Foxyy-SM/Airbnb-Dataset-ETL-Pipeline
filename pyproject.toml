@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "airbnb-etl"
+version = "1.0.0"
+description = "Streaming ETL for compressed Inside Airbnb city snapshots"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+  "eval-type-backport>=0.2,<1",
+  "aiofiles>=24,<26",
+  "aiohttp>=3.10,<4",
+  "azure-storage-blob>=12.20,<13",
+  "fastapi>=0.115,<0.116",
+  "psycopg[binary,pool]>=3.2,<3.3",
+  "pydantic-settings>=2.6,<3",
+  "uvicorn[standard]>=0.32,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "httpx>=0.27,<1",
+  "pytest>=8.2,<9",
+  "ruff>=0.6,<1",
+]
+
+[project.scripts]
+airbnb-etl = "airbnb_etl.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["airbnb_etl"]

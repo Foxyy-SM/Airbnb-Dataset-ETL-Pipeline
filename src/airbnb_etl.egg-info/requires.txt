@@ -1,0 +1,13 @@
+eval-type-backport<1,>=0.2
+aiofiles<26,>=24
+aiohttp<4,>=3.10
+azure-storage-blob<13,>=12.20
+fastapi<0.116,>=0.115
+psycopg[binary,pool]<3.3,>=3.2
+pydantic-settings<3,>=2.6
+uvicorn[standard]<1,>=0.32
+
+[dev]
+httpx<1,>=0.27
+pytest<9,>=8.2
+ruff<1,>=0.6

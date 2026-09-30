@@ -1,0 +1,158 @@
+Metadata-Version: 2.4
+Name: airbnb-etl
+Version: 1.0.0
+Summary: Streaming ETL for compressed Inside Airbnb city snapshots
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
+Requires-Dist: eval-type-backport<1,>=0.2
+Requires-Dist: aiofiles<26,>=24
+Requires-Dist: aiohttp<4,>=3.10
+Requires-Dist: azure-storage-blob<13,>=12.20
+Requires-Dist: fastapi<0.116,>=0.115
+Requires-Dist: psycopg[binary,pool]<3.3,>=3.2
+Requires-Dist: pydantic-settings<3,>=2.6
+Requires-Dist: uvicorn[standard]<1,>=0.32
+Provides-Extra: dev
+Requires-Dist: httpx<1,>=0.27; extra == "dev"
+Requires-Dist: pytest<9,>=8.2; extra == "dev"
+Requires-Dist: ruff<1,>=0.6; extra == "dev"
+
+# Airbnb ETL
+
+A streaming ETL service for [Inside Airbnb](https://insideairbnb.com/get-the-data/) city snapshots. Each snapshot is seven files. The three large ones — detailed listings, calendar, and reviews — are gzip. The pipeline downloads those files concurrently, keeps the original bytes in local storage or Azure Blob Storage, and loads an analytical projection into PostgreSQL.
+
+The same table layout is rendered for PostgreSQL, MySQL, and Azure SQL. FastAPI exposes the catalog, the pipeline, and the warehouse. Docker builds a two-stage image. GitHub Actions runs the tests, builds the image, publishes it, and can update an Azure Container App when that deploy is switched on.
+
+Inside Airbnb publishes the files. This repository does not redistribute them.
+
+## What happens to one city
+
+```text
+Inside Airbnb snapshot
+        │
+        │  7 HTTP GETs at once (aiohttp)
+        ▼
+raw bytes  ── local disk  or  Azure Blob
+        │     keys: {market}/{snapshot}/{dataset}/{filename}
+        │     sha256 sidecar, reused on the next run
+        ▼
+stream gunzip + csv / geojson
+        │     one row at a time, not a dataframe
+        ▼
+typed projection
+        │
+        ▼
+PostgreSQL COPY into a temp table
+        │     then replace that market + snapshot
+        ▼
+neighbourhood_metrics + market_metrics
+        │
+        ▼
+FastAPI
+```
+
+Albany is the default because the whole snapshot is about 4 MB compressed. A large city is a different size: on 29 September 2026, Rome's `reviews.csv.gz` was 343 MB and Paris's was 322 MB. Eight large cities together were about 2.5 GB compressed, almost all of it review text. The loader never inflates a file into one string. Gzip is read through a streaming decoder, and calendar rows are copied in a single pass.
+
+## The seven files
+
+| Dataset | Published path | Warehouse table |
+| --- | --- | --- |
+| Detailed listings | `data/listings.csv.gz` | `listings` |
+| Calendar | `data/calendar.csv.gz` | `calendars` |
+| Detailed reviews | `data/reviews.csv.gz` | `reviews` |
+| Summary listings | `visualisations/listings.csv` | `listing_summaries` |
+| Summary reviews | `visualisations/reviews.csv` | `review_dates` |
+| Neighbourhood list | `visualisations/neighbourhoods.csv` | `neighbourhoods` |
+| Neighbourhood shapes | `visualisations/neighbourhoods.geojson` | `neighbourhood_geometries` |
+
+`config/markets.json` pins the city slug and snapshot date used to build those URLs. Albany, New York City, Los Angeles, London, Paris, Barcelona, Rome, and Sydney are filled in from the Inside Airbnb download page as of 29 September 2026. A market code is the only thing a request can choose. The service does not accept an arbitrary URL.
+
+The detailed listings file has about 90 columns. `listings` keeps the columns the API and the marts actually aggregate: price, room type, capacity, review scores, availability, superhost flags, and the 2026 occupancy and revenue estimates. Descriptions, photo URLs, host essays, and the repeated min/max-night permutations stay in the raw gzip.
+
+`calendars` is the high-volume table, so it stays narrow: listing, stay date, available flag, minimum nights, maximum nights. The 2026 calendar file no longer carries a price. Review text lives only in `reviews`. `review_dates` is the summary file, a date spine with no comment body, so a time-series scan does not read the comments. Fact tables have no foreign keys. A multi-million-row `COPY` should not pay for a referential check on every calendar day.
+
+## Technologies
+
+**Python.** The service targets 3.9 and newer. Parsing uses the standard-library `csv` and `gzip` modules so a reviews file is never fully inflated in memory.
+
+**aiohttp.** One client session fetches all seven files. A semaphore sized to the snapshot (`DOWNLOAD_CONCURRENCY`, default 7) is what makes the transfers overlap. Retries cover timeouts, 429, and 5xx. A 404 fails immediately. Bytes are hashed with SHA-256 while they are written. If the object and its `.sha256` sidecar are already there, the next run reuses them.
+
+**Local storage and Azure Blob Storage.** Both implement the same key layout. `STORAGE_BACKEND=local` writes under `DATA_DIR`. `STORAGE_BACKEND=azure` streams the same key into `AZURE_BLOB_CONTAINER` and materializes a local cache only when a file is parsed. The container is created if it does not exist.
+
+**PostgreSQL.** This is the database the API reads. Each table load copies into a temporary table and then, in one transaction, deletes that market's snapshot and inserts the new rows. A failed copy leaves the previous snapshot in place. After the seven files land, `neighbourhood_metrics` is rebuilt. Median price uses `PERCENTILE_CONT`. `market_metrics` is a view over `listings`.
+
+**MySQL and Azure SQL.** `sql/mysql` and `sql/azure_sql` are the same tables, indexes, and mart. MySQL computes the median with `ROW_NUMBER` because it has no `PERCENTILE_CONT` aggregate. Azure SQL uses `PERCENTILE_CONT` as a window function. Types change with the engine: `BOOLEAN` / `TINYINT(1)` / `BIT`, `JSONB` / `JSON` / `NVARCHAR(MAX)`, `TIMESTAMPTZ` / `DATETIME(6)` / `DATETIME2`. The API does not open a MySQL or Azure SQL connection. Those scripts are the deployable form of the model.
+
+**FastAPI.** Interactive docs are at `/docs`.
+
+| Method | Path | Role |
+| --- | --- | --- |
+| GET | `/health` | Process, storage backend, database, dataset count |
+| GET | `/datasets` | The seven file contracts |
+| GET | `/markets` | Cities pinned in the catalog |
+| POST | `/pipeline/runs` | Queue a load, or a dry run |
+| GET | `/pipeline/runs` | Recent runs |
+| GET | `/pipeline/runs/{run_id}` | One run, including row counts |
+| GET | `/listings` | Filter by room type, neighbourhood, max price |
+| GET | `/listings/{listing_id}` | One analytical listing |
+| GET | `/listings/{listing_id}/reviews` | Review text, newest first |
+| GET | `/listings/{listing_id}/calendar` | Stay dates and available-night totals |
+| GET | `/neighbourhoods` | Names, optionally with GeoJSON |
+| GET | `/analytics/neighbourhoods` | Median price, rating, superhost share, revenue |
+| GET | `/analytics/markets` | One row for the city snapshot |
+
+A load returns `202` and runs after the response. Two runs for the same market take the lock one at a time. A full load needs PostgreSQL. Without it, `POST /pipeline/runs` still accepts `{"dry_run": true}` and the query routes return 503. Prices in JSON are decimal strings.
+
+**Docker.** The Dockerfile is two stages. The builder installs the package into a virtualenv. The runtime image copies that virtualenv plus `config/` and `sql/`, creates a non-root user, and does not include pip's download cache. `docker compose up --build` starts PostgreSQL 16 and the API. The API applies `sql/postgresql/schema.sql` on startup. That script is safe to run again (`IF NOT EXISTS`, `CREATE OR REPLACE VIEW`). Changing a column means recreating the database volume. The script does not migrate old tables.
+
+**GitHub Actions.** `.github/workflows/ci.yml` lints and tests on Python 3.9 and 3.12, then builds the image. `.github/workflows/cd.yml` pushes `ghcr.io/<repository>/airbnb-etl` on `main`. The Azure job runs only when the repository variable `AZURE_DEPLOY_ENABLED` is `true`, and then it expects `AZURE_CREDENTIALS`, `AZURE_CONTAINER_APP`, and `AZURE_RESOURCE_GROUP`. These workflows are picked up when this directory is the root of the GitHub repository.
+
+## Run it
+
+Dry run, no database. This downloads Albany from Inside Airbnb and prints row counts:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+airbnb-etl run --market albany --dry-run
+```
+
+API and PostgreSQL:
+
+```bash
+docker compose up --build
+curl -s -X POST http://localhost:8000/pipeline/runs \
+  -H 'content-type: application/json' \
+  -d '{"market_code":"albany","dry_run":false}'
+```
+
+Then open `http://localhost:8000/docs`.
+
+Without Docker, point `DATABASE_URL` at a PostgreSQL 16 instance and run:
+
+```bash
+airbnb-etl init-db
+airbnb-etl run --market albany
+airbnb-etl serve
+```
+
+Azure Blob instead of the local disk:
+
+```bash
+export STORAGE_BACKEND=azure
+export AZURE_STORAGE_CONNECTION_STRING='...'
+export AZURE_BLOB_CONTAINER=airbnb-raw
+```
+
+Regenerate the dialect scripts after a schema change:
+
+```bash
+python -m airbnb_etl.ddl
+pytest
+ruff check src tests
+```
+
+## Tests
+
+`pytest` covers type conversion, gzip projection, concurrent downloads, reuse of an existing object, the seven-file load against a local file server, SQL parity across the three dialects, and the HTTP contract. It does not open PostgreSQL. The `COPY` path runs when `airbnb-etl run` or the API is pointed at a database.
